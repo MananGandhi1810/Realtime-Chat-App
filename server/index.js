@@ -61,7 +61,14 @@ wss.on('connection', function connection (ws) {
           )
         }
         console.log('user: ', dbUser)
+        dbUser.password = undefined
         ws.user = dbUser
+        ws.send(
+          JSON.stringify({
+            type: 'join-response',
+            user: dbUser
+          })
+        )
       })
     } else if (data.type === 'message') {
       if (!ws.user) {
@@ -80,9 +87,9 @@ wss.on('connection', function connection (ws) {
         })
       )
     }
-
+    data.user = ws.user
     wss.clients.forEach(function each (client) {
-      if (client !== ws) {
+      if (client !== ws && client !== wss) {
         client.send(JSON.stringify(data))
       }
     })
