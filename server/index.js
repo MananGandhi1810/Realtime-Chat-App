@@ -4,6 +4,7 @@ const redis = require('redis')
 const express = require('express')
 const { PrismaClient } = require('@prisma/client')
 const jsonwebtoken = require('jsonwebtoken')
+const cors = require('cors')
 
 const publisher = redis.createClient()
 const subscriber = publisher.duplicate()
@@ -11,6 +12,11 @@ const wss = new WebSocketServer({ port: 8080 })
 
 const prisma = new PrismaClient()
 const app = express()
+app.use(
+  cors({
+    origin: '*'
+  })
+)
 app.use(express.json())
 
 const appSecretKey = process.env.APP_SECRET_KEY || 'thisIsASecretKey'
@@ -22,11 +28,13 @@ subscriber.connect((address = 'redis://localhost:6379'))
 wss.on('connection', function connection (ws) {
   ws.on('error', console.error)
   ws.id = uuid.v4()
+  ws.send(JSON.stringify({ type: 'give-details' }))
 
   ws.on('message', function message (data) {
     data = JSON.parse(data)
     data.id = ws.id
     console.log('received: %s', data)
+    console.log(wss.clients)
 
     if (data.type === 'join') {
       const authToken = data.token
@@ -88,8 +96,9 @@ wss.on('connection', function connection (ws) {
       )
     }
     data.user = ws.user
+    data.createdAt = Date.now()
     wss.clients.forEach(function each (client) {
-      if (client !== ws && client !== wss) {
+      if (client !== wss) {
         client.send(JSON.stringify(data))
       }
     })
@@ -109,11 +118,11 @@ function authenticate (req, res, next) {
   if (!token) {
     return res.status(401).json({ message: 'Unauthorized', status: 'error' })
   }
-  jsonwebtoken.verify(token, appSecretKey, (err, user) => {
+  jsonwebtoken.verify(token, appSecretKey, async (err, user) => {
     if (err) {
       return res.status(403).json({ message: 'Forbidden', status: 'error' })
     }
-    const dbUser = prisma.user.findUnique({
+    const dbUser = await prisma.user.findUnique({
       where: {
         id: user.id
       }
@@ -196,8 +205,19 @@ app.post('/verify_user', authenticate, async (req, res) => {
 })
 
 app.get('/messages', authenticate, async (req, res) => {
-  const messages = await prisma.message.findMany()
-  res.json(messages)
+  const messages = await prisma.message.findMany({
+    include: {
+      user: true
+    },
+    orderBy: {
+      createdAt: 'desc'
+    }
+  })
+  res.json({
+    message: 'Messages fetched successfully',
+    status: 'success',
+    messages: messages
+  })
 })
 
 app.listen(port, () => {
